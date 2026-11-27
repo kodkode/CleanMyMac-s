@@ -343,4 +343,65 @@ final class PersistenceTests: XCTestCase {
         XCTAssertFalse(text.contains("\n"), "compact output has no line breaks")
         XCTAssertEqual(store.load(), history)
     }
+
+    // MARK: Files that can't be read
+
+    func testUnreadableFileIsKeptAsideNotOverwritten() throws {
+        let store = JSONFileStore<SpruceSettings>(url: dir.appendingPathComponent("settings.json"))
+        XCTAssertNil(store.load(), "no file yet")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.unreadableURL.path))
+
+        let damaged = Data(#"{"ignoredPaths": ["~/Keep"], "#.utf8)   // cut off mid-write or hand-edited
+        try damaged.write(to: store.url)
+        XCTAssertNil(store.load())
+        XCTAssertEqual(store.unreadableURL.lastPathComponent, "settings.unreadable.json")
+        XCTAssertEqual(try Data(contentsOf: store.unreadableURL), damaged)
+
+        // What the app does next — saving defaults — no longer destroys the user's file.
+        try store.save(SpruceSettings())
+        XCTAssertEqual(try Data(contentsOf: store.unreadableURL), damaged)
+        XCTAssertEqual(store.load()?.ignoredPaths, [])
+    }
+
+    func testHistoryKeepsEntriesAroundOneFromANewerVersion() throws {
+        let store = JSONFileStore<ActivityHistory>(url: dir.appendingPathComponent("history.json"), prettyPrinted: false)
+        let json = #"""
+        {"entries":[
+          {"id":"11111111-1111-1111-1111-111111111111","date":"2026-01-01T00:00:00Z","module":"cleanup","kind":"clean","bytes":5,"count":1,"summary":"a"},
+          {"id":"22222222-2222-2222-2222-222222222222","date":"2026-01-02T00:00:00Z","module":"cleanup","kind":"somethingNewer","bytes":7,"count":1,"summary":"b"},
+          {"id":"33333333-3333-3333-3333-333333333333","date":"2026-01-03T00:00:00Z","module":"protection","kind":"malwareScan","bytes":0,"count":0,"summary":"c"}
+        ]}
+        """#
+        try Data(json.utf8).write(to: store.url)
+        let history = try XCTUnwrap(store.load())
+        XCTAssertEqual(history.entries.map(\.summary), ["a", "c"])
+        // The file stays in place, and a full copy is kept because the next save drops "b".
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.url.path))
+        XCTAssertEqual(try String(contentsOf: store.unreadableURL, encoding: .utf8), json)
+    }
+
+    func testSettingsListsKeepReadableElements() throws {
+        let store = JSONFileStore<SpruceSettings>(url: dir.appendingPathComponent("settings.json"))
+        try Data(#"{"ignoredPaths": ["~/Keep", 7, "~/Also"], "checkupModules": ["cleanup", "notAModule"], "oldFileDays": 90}"#.utf8)
+            .write(to: store.url)
+        let settings = try XCTUnwrap(store.load())
+        XCTAssertEqual(settings.ignoredPaths, ["~/Keep", "~/Also"])
+        XCTAssertEqual(settings.checkupModules, [.cleanup])
+        XCTAssertEqual(settings.oldFileDays, 90)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.unreadableURL.path))
+    }
+
+    func testLoadElementsSkipsOnlyTheUnreadableOnes() throws {
+        let store = JSONFileStore<[ModuleID]>(url: dir.appendingPathComponent("list.json"))
+        try Data(#"["cleanup", "fromTheFuture", "clutter"]"#.utf8).write(to: store.url)
+        XCTAssertNil(JSONFileStore<[ModuleID]>(url: dir.appendingPathComponent("missing.json")).loadElements())
+        XCTAssertEqual(store.loadElements(), [.cleanup, .clutter])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.unreadableURL.path))
+
+        // A list read in full leaves nothing behind.
+        let clean = JSONFileStore<[ModuleID]>(url: dir.appendingPathComponent("clean.json"))
+        try clean.save([.cleanup])
+        XCTAssertEqual(clean.loadElements(), [.cleanup])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: clean.unreadableURL.path))
+    }
 }
