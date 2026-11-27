@@ -145,26 +145,70 @@ public struct ClutterSimilarClusterer: Sendable {
     }
 
     /// Index clusters (each with at least two members), largest first.
+    ///
+    /// Memory stays proportional to the number of images however alike they are. Pictures
+    /// with the same fingerprint (blank scans, black frames, a burst of one scene) are one
+    /// node, and each node keeps only its `maximumClusterSize` closest neighbours — a
+    /// cluster can't grow past that anyway. Listing every pair instead would need
+    /// gigabytes for ten thousand near-identical images.
     public func cluster(_ prints: [ClutterImageFingerprint], shouldContinue: () -> Bool = { true }) -> [[Int]] {
         guard prints.count > 1 else { return [] }
-        var tree = ClutterBKTree()
-        for (index, fp) in prints.enumerated() { tree.insert(fp.dHash, index: index) }
 
-        struct Edge { var d: Int; var a: Int; var i: Int; var j: Int }
-        var edges: [Edge] = []
-        for (i, fp) in prints.enumerated() {
-            if i % 256 == 0 && !shouldContinue() { return [] }
-            for j in tree.query(fp.dHash, radius: dHashRadius) where j > i {
-                let a = ClutterImageHasher.hamming(fp.aHash, prints[j].aHash)
-                guard a <= aHashRadius else { continue }
-                edges.append(Edge(d: ClutterImageHasher.hamming(fp.dHash, prints[j].dHash), a: a, i: i, j: j))
+        // One node per distinct fingerprint, in order of first appearance.
+        struct Node { var dHash: UInt64; var aHash: UInt64; var prints: [Int] }
+        struct Key: Hashable { var dHash: UInt64; var aHash: UInt64 }
+        var nodes: [Node] = []
+        var nodeOfKey: [Key: Int] = [:]
+        for (index, fp) in prints.enumerated() {
+            let key = Key(dHash: fp.dHash, aHash: fp.aHash)
+            if let node = nodeOfKey[key] {
+                nodes[node].prints.append(index)
+            } else {
+                nodeOfKey[key] = nodes.count
+                nodes.append(Node(dHash: fp.dHash, aHash: fp.aHash, prints: [index]))
             }
         }
-        edges.sort { ($0.d, $0.a, $0.i, $0.j) < ($1.d, $1.a, $1.i, $1.j) }
 
-        var parent = Array(prints.indices)
-        var members: [Int: [Int]] = [:]
-        for i in prints.indices { members[i] = [i] }
+        // The tree holds each dHash once: equal hashes would chain into a list.
+        var nodesOfDHash: [UInt64: [Int]] = [:]
+        var distinctDHashes: [UInt64] = []
+        var tree = ClutterBKTree()
+        for (index, node) in nodes.enumerated() {
+            if nodesOfDHash[node.dHash] == nil {
+                tree.insert(node.dHash, index: distinctDHashes.count)
+                distinctDHashes.append(node.dHash)
+            }
+            nodesOfDHash[node.dHash, default: []].append(index)
+        }
+
+        struct Edge { var d: UInt8; var a: UInt8; var i: Int32; var j: Int32 }
+        func before(_ x: Edge, _ y: Edge) -> Bool { (x.d, x.a, x.i, x.j) < (y.d, y.a, y.i, y.j) }
+        var edges: [Edge] = []
+        var nearest: [Edge] = []
+        for (i, node) in nodes.enumerated() {
+            if i % 32 == 0 && !shouldContinue() { return [] }
+            nearest.removeAll(keepingCapacity: true)
+            for hashIndex in tree.query(node.dHash, radius: dHashRadius) {
+                let dHash = distinctDHashes[hashIndex]
+                let d = ClutterImageHasher.hamming(node.dHash, dHash)
+                for j in nodesOfDHash[dHash] ?? [] where j > i {
+                    let a = ClutterImageHasher.hamming(node.aHash, nodes[j].aHash)
+                    guard a <= aHashRadius else { continue }
+                    nearest.append(Edge(d: UInt8(d), a: UInt8(a), i: Int32(i), j: Int32(j)))
+                }
+            }
+            if nearest.count > maximumClusterSize {
+                nearest.sort(by: before)
+                nearest.removeLast(nearest.count - maximumClusterSize)
+            }
+            edges.append(contentsOf: nearest)
+        }
+        edges.sort(by: before)
+
+        var parent = Array(nodes.indices)
+        var members: [Int: [Int]] = [:]          // root → its nodes
+        var sizes = nodes.map(\.prints.count)    // images under each root
+        for i in nodes.indices { members[i] = [i] }
         func find(_ x: Int) -> Int {
             var x = x
             while parent[x] != x {
@@ -173,13 +217,14 @@ public struct ClutterSimilarClusterer: Sendable {
             }
             return x
         }
-        for edge in edges {
-            let ra = find(edge.i), rb = find(edge.j)
+        for (count, edge) in edges.enumerated() {
+            if count % 4096 == 0 && !shouldContinue() { return [] }
+            let ra = find(Int(edge.i)), rb = find(Int(edge.j))
             guard ra != rb, let ma = members[ra], let mb = members[rb] else { continue }
-            guard ma.count + mb.count <= maximumClusterSize else { continue }
+            guard sizes[ra] + sizes[rb] <= maximumClusterSize else { continue }
             var compatible = true
             outer: for x in ma {
-                for y in mb where ClutterImageHasher.hamming(prints[x].dHash, prints[y].dHash) > linkageRadius {
+                for y in mb where ClutterImageHasher.hamming(nodes[x].dHash, nodes[y].dHash) > linkageRadius {
                     compatible = false
                     break outer
                 }
@@ -188,11 +233,21 @@ public struct ClutterSimilarClusterer: Sendable {
             parent[rb] = ra
             members[ra] = ma + mb
             members[rb] = nil
+            sizes[ra] += sizes[rb]
         }
-        return members.values
-            .filter { $0.count > 1 }
-            .map { $0.sorted() }
-            .sorted { $0.count != $1.count ? $0.count > $1.count : $0[0] < $1[0] }
+
+        var clusters: [[Int]] = []
+        for group in members.values {
+            let indices = group.flatMap { nodes[$0].prints }.sorted()
+            // More identical pictures than one cluster holds: several full clusters.
+            var start = 0
+            while start < indices.count {
+                let end = min(start + maximumClusterSize, indices.count)
+                if end - start > 1 { clusters.append(Array(indices[start..<end])) }
+                start = end
+            }
+        }
+        return clusters.sorted { $0.count != $1.count ? $0.count > $1.count : $0[0] < $1[0] }
     }
 
     /// Builds clusters of files. `files` and `prints` are matched by path.
