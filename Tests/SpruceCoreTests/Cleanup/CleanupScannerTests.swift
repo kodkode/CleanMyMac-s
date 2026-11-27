@@ -447,9 +447,11 @@ final class CleanupScannerTests: XCTestCase {
         let (scanner, report) = fx.scan(fx.context(), sections: [.systemJunk])
         let item = try XCTUnwrap(report.item(endingWith: "com.example.app"))
         let folder = fx.home + "/Library/Caches/com.example.app"
+        // Build the replacement while the original still exists, so it can't get the
+        // original's inode number back (the file system may reuse a freed one at once).
+        fx.file("Library/Caches/replacement/other.bin", age: 2 * day)
         try FileManager.default.removeItem(atPath: folder)
-        fx.file("Library/Caches/placeholder", age: 2 * day)   // keep inode numbers from being reused at once
-        fx.file("Library/Caches/com.example.app/other.bin", age: 2 * day)
+        try FileManager.default.moveItem(atPath: fx.home + "/Library/Caches/replacement", toPath: folder)
         let expansion = scanner.expand(item)
         XCTAssertNotNil(expansion.failure)
         XCTAssertTrue(expansion.targets.isEmpty)

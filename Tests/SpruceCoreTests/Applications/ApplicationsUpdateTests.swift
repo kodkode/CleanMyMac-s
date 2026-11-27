@@ -2,6 +2,17 @@ import Foundation
 import XCTest
 @testable import SpruceCore
 
+final class ApplicationsUpdateLinkTests: XCTestCase {
+    func testOnlyWebLinksMayBeOpened() {
+        XCTAssertTrue(ApplicationsUpdate.isWebLink(URL(string: "https://example.com/download")!))
+        XCTAssertTrue(ApplicationsUpdate.isWebLink(URL(string: "HTTP://example.com/notes.html")!))
+        for bad in ["file:///Users/Shared/x.command", "smb://attacker/share", "ssh://host", "x-apple.systempreferences:x",
+                    "macappstore://showUpdatesPage", "https:///nohost", "javascript:alert(1)", "/relative/path"] {
+            XCTAssertFalse(ApplicationsUpdate.isWebLink(URL(string: bad)!), bad)
+        }
+    }
+}
+
 final class ApplicationsUpdateTests: XCTestCase {
 
     func testITunesLookupDecodingAndUpdate() {

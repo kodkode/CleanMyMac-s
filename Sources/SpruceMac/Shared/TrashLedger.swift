@@ -14,9 +14,15 @@ public struct TrashLedgerEntry: Codable, Hashable, Sendable, Identifiable {
     public var bytes: Int64
     /// Moved as administrator: it stays root-owned, so Spruce can't put it back.
     public var byAdministrator: Bool
+    /// The item's inode and device when it was trashed (a move within a disk keeps both),
+    /// so Put Back can tell it from a different item that now has the same place in the
+    /// Trash. nil in entries written by older versions.
+    public var inode: UInt64?
+    public var device: UInt64?
 
     public init(id: UUID = UUID(), runID: UUID, module: ModuleID, date: Date = Date(), originalPath: String,
-                trashedPath: String, bytes: Int64, byAdministrator: Bool = false) {
+                trashedPath: String, bytes: Int64, byAdministrator: Bool = false, inode: UInt64? = nil,
+                device: UInt64? = nil) {
         self.id = id
         self.runID = runID
         self.module = module
@@ -25,6 +31,15 @@ public struct TrashLedgerEntry: Codable, Hashable, Sendable, Identifiable {
         self.trashedPath = trashedPath
         self.bytes = bytes
         self.byAdministrator = byAdministrator
+        self.inode = inode
+        self.device = device
+    }
+
+    /// False when the item now at `trashedPath` is known to be a different one.
+    func isStillTheTrashedItem() -> Bool {
+        guard let inode, let current = FileWalker.entry(at: trashedPath) else { return true }
+        if let device, device != current.device { return true }   // trashed onto another disk: a copy, can't tell
+        return current.inode == inode
     }
 }
 
@@ -97,6 +112,11 @@ public final class TrashLedger: @unchecked Sendable {
             if entry.byAdministrator || !Self.isInTrash(entry.trashedPath) {
                 result.failures.append(ItemFailure(itemID: itemID, title: title,
                                                    reason: "It was moved as administrator; drag it back from the Trash in Finder."))
+                continue
+            }
+            guard entry.isStillTheTrashedItem() else {
+                result.failures.append(ItemFailure(itemID: itemID, title: title,
+                                                   reason: "The item in the Trash under that name is a different one now."))
                 continue
             }
             if FileWalker.entry(at: entry.originalPath) != nil {

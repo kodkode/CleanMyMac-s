@@ -227,6 +227,14 @@ public enum ApplicationsSparkleInstallPlan {
 // MARK: - Sparkle → update
 
 public extension ApplicationsUpdate {
+    /// True for a link that is safe to hand to the system to open: a web page. Appcasts and
+    /// Homebrew metadata are written by whoever runs those servers, and macOS would open a
+    /// `file:` or `smb:` link, or any app's own URL scheme, just the same.
+    static func isWebLink(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return false }
+        return url.host?.isEmpty == false
+    }
+
     /// Builds an update from the best appcast item when it is newer than the installed app.
     static func fromAppcast(_ item: ApplicationsAppcastItem, app: ApplicationsAppInfo, feedURL: URL?) -> ApplicationsUpdate? {
         guard ApplicationsVersion.isUpdate(availableVersion: item.displayVersion, availableBuild: item.version,

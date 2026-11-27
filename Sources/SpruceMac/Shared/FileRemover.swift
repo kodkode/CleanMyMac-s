@@ -29,6 +29,18 @@ public final class FileRemover: @unchecked Sendable {
         self.ledger = .shared
     }
 
+    /// Where every mounted file system is attached.
+    static func mountPoints() -> [String] {
+        var list: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&list, MNT_NOWAIT)
+        guard count > 0, let list else { return [] }
+        return (0..<Int(count)).map { index in
+            withUnsafeBytes(of: list[index].f_mntonname) { raw in
+                String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+        }
+    }
+
     /// Reason given for items left alone because the run was stopped.
     public static let stoppedReason = "Stopped before this item"
 
@@ -57,6 +69,7 @@ public final class FileRemover: @unchecked Sendable {
         let runID = UUID()
         let candidates = items.filter { $0.deletion != .custom && $0.url != nil }
         let reporter = ProgressThrottle(progress)
+        let mounts = Self.mountPoints().map { PathGuard.key($0) }
 
         for (index, item) in candidates.enumerated() {
             if Task.isCancelled { break }
@@ -67,6 +80,11 @@ public final class FileRemover: @unchecked Sendable {
 
             if let settings, settings.isIgnored(path: url.path) {
                 failures.append(ItemFailure(itemID: item.id, title: item.title, reason: "On the ignore list"))
+                continue
+            }
+            if let settings, let kept = settings.ignoredPath(inside: url.path) {
+                failures.append(ItemFailure(itemID: item.id, title: item.title,
+                                            reason: "It contains \(kept.abbreviatingHome), which is on the ignore list"))
                 continue
             }
             let verdict = guardian.check(url, method: item.deletion, options: options)
@@ -84,6 +102,18 @@ public final class FileRemover: @unchecked Sendable {
                 failures.append(ItemFailure(itemID: item.id, title: item.title, reason: "Changed since the scan; skipped"))
                 continue
             }
+            // A disk (image, network share) mounted inside the folder was not part of what
+            // the scan measured; removing the folder would empty that disk too.
+            if current.isDirectory {
+                let key = PathGuard.key(url.resolvingSymlinksInPath().path)
+                if mounts.contains(where: { PathGuard.isStrictlyInside($0, key) }) {
+                    failures.append(ItemFailure(itemID: item.id, title: item.title,
+                                                reason: "A disk is mounted inside it; eject that disk first"))
+                    log.record(module: module, action: item.deletion.rawValue, result: "refused",
+                               detail: "\(url.path) — a disk is mounted inside")
+                    continue
+                }
+            }
 
             do {
                 switch item.deletion {
@@ -94,7 +124,8 @@ public final class FileRemover: @unchecked Sendable {
                     trashedCount += 1
                     if let trashedPath = resulting?.path {
                         ledgerEntries.append(TrashLedgerEntry(runID: runID, module: module, originalPath: url.path,
-                                                              trashedPath: trashedPath, bytes: item.size))
+                                                              trashedPath: trashedPath, bytes: item.size,
+                                                              inode: current.inode, device: current.device))
                     }
                 case .remove:
                     try FileManager.default.removeItem(at: url)

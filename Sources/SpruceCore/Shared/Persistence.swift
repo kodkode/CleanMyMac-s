@@ -361,6 +361,17 @@ public struct SpruceSettings: Codable, Equatable, Sendable {
         }
     }
 
+    /// An ignored path that lies inside `path` and still exists, if any. Removing `path`
+    /// would take it along, so `FileRemover` refuses such a folder.
+    public func ignoredPath(inside path: String,
+                            exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String? {
+        let key = PathGuard.key((path as NSString).standardizingPath)
+        return ignoredPaths.first { ignored in
+            let expanded = (ignored.expandingTilde as NSString).standardizingPath
+            return PathGuard.isStrictlyInside(PathGuard.key(expanded), key) && exists(expanded)
+        }
+    }
+
     /// Removes ignored items from scan results.
     public func filteringIgnored(_ groups: [ScanGroup]) -> [ScanGroup] {
         groups.compactMap { group in
