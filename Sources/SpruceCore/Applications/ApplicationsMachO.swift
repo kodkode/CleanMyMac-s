@@ -53,7 +53,8 @@ public enum ApplicationsMachO {
     public static func cpus(atPath path: String) -> [CPU]? {
         guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }
-        let data = handle.readData(ofLength: headerLength)
+        // The throwing read: `readData(ofLength:)` raises an uncatchable exception on a read error.
+        guard let data = try? handle.read(upToCount: headerLength) else { return nil }
         return cpus(fromHeader: data)
     }
 

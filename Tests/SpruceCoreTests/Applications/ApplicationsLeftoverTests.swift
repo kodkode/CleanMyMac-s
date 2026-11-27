@@ -236,6 +236,32 @@ final class ApplicationsInstallerTests: XCTestCase {
         XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: notZip))
     }
 
+    /// Files that can't be read as a zip come back as nil instead of crashing the scan.
+    func testZipIndexAndHeaderReadsSurviveUnreadableFiles() throws {
+        let tree = ApplicationsTempTree()
+        let zip = tree.zip("a.zip", entries: ["Example.app/", "Example.app/Contents/Info.plist"])
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: zip))
+        let folder = (zip as NSString).deletingLastPathComponent
+
+        // Cut off mid-download: the directory the trailer points at is no longer there.
+        let cut = folder + "/cut.zip"
+        try bytes.suffix(30).write(to: URL(fileURLWithPath: cut))
+        XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: cut))
+
+        let empty = folder + "/empty.zip"
+        try Data().write(to: URL(fileURLWithPath: empty))
+        XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: empty))
+
+        // A folder (reading one fails) and a link are not opened at all.
+        XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: folder))
+        XCTAssertFalse(ApplicationsDiskImage.isEncrypted(atPath: folder))
+        XCTAssertNil(ApplicationsMachO.cpus(atPath: folder))
+        let link = folder + "/link.zip"
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: zip)
+        XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: link))
+        XCTAssertNil(ApplicationsZipIndex.topLevelEntries(atPath: folder + "/missing.zip"))
+    }
+
     func testScanClassifiesAndMatches() {
         let tree = ApplicationsTempTree()
         let old = Date(timeIntervalSinceNow: -60 * 86_400)
