@@ -482,48 +482,20 @@ public enum Shell {
     }
 
     /// Executes `executable` with `arguments` (no shell involved, so no injection).
+    ///
+    /// Stopping the calling task, or the timeout, terminates the tool and kills it if it
+    /// is still running a moment later, so a stopped scan doesn't wait out the timeout and
+    /// a tool that ignores the first signal can't hold the caller for good. Standard error
+    /// is kept up to `PerformanceStreamingShell.stderrLimit` bytes.
     public static func run(_ executable: String, _ arguments: [String] = [], timeout: TimeInterval = 60) async -> Result {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                let out = Pipe()
-                let err = Pipe()
-                process.standardOutput = out
-                process.standardError = err
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(returning: Result(status: -1, stdout: "", stderr: error.localizedDescription))
-                    return
-                }
-                let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-                // Drain stderr concurrently so a chatty tool cannot fill the pipe and deadlock.
-                let errBox = DataBox()
-                let errGroup = DispatchGroup()
-                errGroup.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    errBox.data = err.fileHandleForReading.readDataToEndOfFile()
-                    errGroup.leave()
-                }
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                errGroup.wait()
-                let errData = errBox.data
-                process.waitUntilExit()
-                timer.cancel()
-                continuation.resume(returning: Result(
-                    status: process.terminationStatus,
-                    stdout: String(decoding: outData, as: UTF8.self),
-                    stderr: String(decoding: errData, as: UTF8.self)
-                ))
-            }
-        }
+        await run(executable, arguments, environment: nil, timeout: timeout)
     }
-}
 
-/// Holds data written by one thread and read by another after a `DispatchGroup.wait()`.
-private final class DataBox: @unchecked Sendable {
-    var data = Data()
+    static func run(_ executable: String, _ arguments: [String], environment: [String: String]?,
+                    timeout: TimeInterval) async -> Result {
+        let output = ShellOutputCollector()
+        let result = await PerformanceStreamingShell.run(executable, arguments, environment: environment,
+                                                         timeout: timeout) { output.append($0) }
+        return Result(status: result.status, stdout: String(decoding: output.data, as: UTF8.self), stderr: result.stderr)
+    }
 }

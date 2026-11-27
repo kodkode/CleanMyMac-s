@@ -29,6 +29,18 @@ public final class FileRemover: @unchecked Sendable {
         self.ledger = .shared
     }
 
+    /// False when `dispose` would certainly leave `item` alone (ignore list, `PathGuard`,
+    /// changed since the scan). Ask before a side effect that only makes sense if the file
+    /// then goes, such as stopping the launch job a plist describes.
+    public func wouldAttempt(_ item: ScanItem, options: PathGuard.Options = [], settings: SpruceSettings? = nil) -> Bool {
+        guard item.deletion != .custom, let url = item.url else { return false }
+        if let settings, settings.isIgnored(path: url.path) || settings.ignoredPath(inside: url.path) != nil { return false }
+        guard guardian.check(url, method: item.deletion, options: options).isAllowed else { return false }
+        if let recorded = item.metadata["inode"], let current = FileWalker.entry(at: url.path),
+           recorded != String(current.inode) { return false }
+        return true
+    }
+
     /// Where every mounted file system is attached.
     static func mountPoints() -> [String] {
         var list: UnsafeMutablePointer<statfs>?
