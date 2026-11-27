@@ -67,7 +67,9 @@ public struct ProtectionMacSystemProbe: ProtectionSystemProbe {
     // MARK: Hashing
 
     public func sha256(of path: String) -> String? {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        // Regular files only, opened without waiting: hashing a named pipe would never end.
+        guard let fd = ProtectionFileSniffer.openRegular(path) else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         defer { try? handle.close() }
         var hasher = SHA256()
         var failed = false

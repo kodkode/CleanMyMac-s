@@ -46,7 +46,7 @@ public enum ProtectionLaunchControl {
         for folder in folders {
             for name in (try? fm.contentsOfDirectory(atPath: folder)) ?? [] where name.lowercased().hasSuffix(".plist") {
                 labels.insert((name as NSString).deletingPathExtension.lowercased())
-                guard let data = fm.contents(atPath: folder + "/" + name),
+                guard let data = ProtectionFileSniffer.readRegular(folder + "/" + name),
                       let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
                       let dict = object as? [String: Any],
                       let label = dict["Label"] as? String, !label.isEmpty else { continue }

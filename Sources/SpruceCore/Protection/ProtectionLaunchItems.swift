@@ -1,6 +1,10 @@
 import Foundation
 #if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 
 /// A parsed launchd property list (launch agent or daemon).
@@ -39,7 +43,7 @@ public struct ProtectionLaunchItem: Sendable, Hashable {
 
     /// Parses a launchd plist. Never throws: unreadable files come back with `isValidPlist == false`.
     public static func parse(path: String, domain: ProtectionLaunchDomain, kind: ProtectionItemKind, home: String) -> ProtectionLaunchItem {
-        guard let data = FileManager.default.contents(atPath: path),
+        guard let data = ProtectionFileSniffer.readRegular(path),
               let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
               let dict = object as? [String: Any] else {
             return ProtectionLaunchItem(plistPath: path, label: nil, program: nil, arguments: [], runAtLoad: false,
@@ -227,18 +231,53 @@ public enum ProtectionFileSniffer {
     }
 
     /// Up to `limit` bytes from the start of a file; nil when it can't be opened or read.
-    ///
-    /// Uses the throwing `FileHandle.read(upToCount:)`: the legacy `readData(ofLength:)`
-    /// raises an Objective-C exception on a read error (a disk I/O error, or a cloud file
-    /// that can't be downloaded), which would take the whole app down mid-scan.
     public static func readPrefix(of path: String, limit: Int) -> Data? {
-        guard limit > 0, let handle = FileHandle(forReadingAtPath: path) else { return nil }
-        defer { try? handle.close() }
-        do {
-            return try handle.read(upToCount: limit) ?? Data()
-        } catch {
+        readRegular(path, limit: limit)
+    }
+
+    /// The most `readRegular` reads when the caller wants a whole file (plists, browser
+    /// preferences): far above any real one, and a bound on what a planted file can cost.
+    public static let maxWholeFileBytes = 64 << 20
+
+    /// A descriptor for reading `path`, only when it is a regular file (symlinks are
+    /// followed). The caller closes it.
+    ///
+    /// The scanner reads files that malware may have planted, so opening must never wait:
+    /// a plain open of a named pipe (`mkfifo ~/Library/LaunchAgents/a.plist`) blocks until
+    /// someone writes to it, which would hang a scan or real-time protection for good.
+    /// `O_NONBLOCK` makes that open return at once, and anything that isn't a regular file
+    /// (pipes, devices, sockets, folders) is then refused.
+    public static func openRegular(_ path: String) -> Int32? {
+        let fd = open(path, O_RDONLY | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        var info = stat()
+        guard fstat(fd, &info) == 0, UInt32(info.st_mode) & UInt32(S_IFMT) == UInt32(S_IFREG) else {
+            close(fd)
             return nil
         }
+        return fd
+    }
+
+    /// Up to `limit` bytes from the start of a regular file; nil when it isn't one or
+    /// can't be read. Uses plain `read`, which reports errors (a disk I/O error, a cloud
+    /// file that can't be downloaded) instead of raising an Objective-C exception the way
+    /// `FileHandle.readData(ofLength:)` does.
+    public static func readRegular(_ path: String, limit: Int = maxWholeFileBytes) -> Data? {
+        guard limit > 0, let fd = openRegular(path) else { return nil }
+        defer { close(fd) }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: min(limit, 64 * 1024))
+        while data.count < limit {
+            let wanted = min(buffer.count, limit - data.count)
+            let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, wanted) }
+            if count < 0 {
+                if errno == EINTR { continue }
+                return nil
+            }
+            if count == 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        return data
     }
 
     // MARK: Cloud placeholders
@@ -290,7 +329,7 @@ public struct ProtectionBundleInfo: Sendable, Hashable {
         let name = (bundlePath as NSString).lastPathComponent
         let candidates = [bundlePath + "/Contents/Info.plist", bundlePath + "/Info.plist"]
         for plist in candidates {
-            guard let data = FileManager.default.contents(atPath: plist),
+            guard let data = ProtectionFileSniffer.readRegular(plist),
                   let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
                   let dict = object as? [String: Any] else { continue }
             let bundleID = dict["CFBundleIdentifier"] as? String
