@@ -107,8 +107,12 @@ enum ApplicationsUninstaller {
             }
         }
 
-        // Unload launch agents and daemons first so nothing respawns from the Trash.
-        await unloadLaunchJobs(in: removable, progress: progress)
+        // Unload launch agents and daemons first so nothing respawns from the Trash — but
+        // only those whose plist will really be removed: a job stopped for a file that then
+        // stays (ignore list, changed since the scan) would be left off until the next login.
+        let removerOptions: PathGuard.Options = [.allowAppBundles, .allowLaunchItems]
+        let leaving = removable.filter { FileRemover.shared.wouldAttempt($0, options: removerOptions, settings: settings) }
+        await unloadLaunchJobs(in: leaving, progress: progress)
 
         // Root-owned items (pkg-installed apps, /Library helpers) go to the Trash with one
         // administrator prompt.

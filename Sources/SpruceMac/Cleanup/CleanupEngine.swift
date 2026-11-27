@@ -148,13 +148,18 @@ public final class CleanupEngine: CheckupContributor, GroupScanner, @unchecked S
         let settings = await MainActor.run { SettingsStore.shared.settings }
         let context = await CleanupSystemProbe.makeContext(purpose: purpose)
         try Self.checkCancellation()
-        let scanner = CleanupScanner(context: context, settings: settings, isCancelled: { Task.isCancelled })
+        // The walks run on Dispatch threads (see `scanInBackground`), where `Task.isCancelled`
+        // can't be read, so a stopped task also raises this flag.
+        let stopFlag = CleanupStopFlag()
+        let scanner = CleanupScanner(context: context, settings: settings,
+                                     isCancelled: { stopFlag.isRaised || Task.isCancelled })
         let rules = scanner.rules(for: sections)
         let tracker = CleanupScanTracker(rules: rules, sections: sections, handler: progress)
         if purpose == .module { locked { liveTracker = tracker } }
         let width = concurrency
 
-        let results = try await withThrowingTaskGroup(of: CleanupRuleResult.self,
+        let results = try await withTaskCancellationHandler {
+          try await withThrowingTaskGroup(of: CleanupRuleResult.self,
                                                       returning: [CleanupRuleResult].self) { group in
             var collected: [CleanupRuleResult] = []
             var queue = rules[...]
@@ -162,7 +167,7 @@ public final class CleanupEngine: CheckupContributor, GroupScanner, @unchecked S
                 guard let rule = queue.popFirst() else { break }
                 tracker.started(rule)
                 group.addTask {
-                    scanner.scan(rule: rule, onProgress: { tracker.visiting($0, title: rule.category.title) })
+                    await Self.scanInBackground(scanner, rule, tracker)
                 }
             }
             while let result = try await group.next() {
@@ -175,11 +180,14 @@ public final class CleanupEngine: CheckupContributor, GroupScanner, @unchecked S
                 if let rule = queue.popFirst() {
                     tracker.started(rule)
                     group.addTask {
-                        scanner.scan(rule: rule, onProgress: { tracker.visiting($0, title: rule.category.title) })
+                        await Self.scanInBackground(scanner, rule, tracker)
                     }
                 }
             }
             return collected
+          }
+        } onCancel: {
+            stopFlag.raise()
         }
         try Self.checkCancellation()
         let report = scanner.assemble(results, sections: sections)
@@ -297,7 +305,7 @@ public final class CleanupEngine: CheckupContributor, GroupScanner, @unchecked S
 
         // Unload broken launch agents before their plists move to the Trash.
         let uid = getuid()
-        for item in launchItems {
+        for item in launchItems where FileRemover.shared.wouldAttempt(item, options: [.allowAppBundles, .allowLaunchItems]) {
             guard let path = item.url?.path else { continue }
             _ = await Shell.run("/bin/launchctl", ["bootout", "gui/\(uid)", path], timeout: 10)
         }
@@ -448,5 +456,40 @@ private final class CleanupScanTracker: @unchecked Sendable {
                                   bytesFound: tally.bytesFound)
         lock.unlock()
         handler(update)
+    }
+}
+
+/// Set when a scan's task is stopped; read by the scanner's walks on Dispatch threads.
+private final class CleanupStopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var raised = false
+
+    var isRaised: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return raised
+    }
+
+    func raise() {
+        lock.lock()
+        raised = true
+        lock.unlock()
+    }
+}
+
+extension CleanupEngine {
+    /// Runs one rule's scan on a Dispatch thread. The scan is a long blocking directory
+    /// walk; on Swift's shared task threads, four of them at once can occupy every thread
+    /// on a small Mac and stall all other async work (the other Checkup modules included)
+    /// until a walk finishes.
+    fileprivate static func scanInBackground(_ scanner: CleanupScanner, _ rule: CleanupRule,
+                                             _ tracker: CleanupScanTracker) async -> CleanupRuleResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: scanner.scan(rule: rule, onProgress: {
+                    tracker.visiting($0, title: rule.category.title)
+                }))
+            }
+        }
     }
 }

@@ -24,8 +24,8 @@ enum PerformanceStreamingShell {
     static let chunkSize = 1 << 20
     static let stderrLimit = 64 * 1024
 
-    static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval,
-                    consume: @escaping @Sendable (Data) -> Void) async -> Result {
+    static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil,
+                    timeout: TimeInterval, consume: @escaping @Sendable (Data) -> Void) async -> Result {
         let control = PerformanceProcessControl()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<Result, Never>) in
@@ -33,6 +33,7 @@ enum PerformanceStreamingShell {
                     let process = Process()
                     process.executableURL = URL(fileURLWithPath: executable)
                     process.arguments = arguments
+                    if let environment { process.environment = environment }
                     let out = Pipe()
                     let err = Pipe()
                     process.standardOutput = out
@@ -135,5 +136,24 @@ private final class PerformanceStderrCollector: @unchecked Sendable {
             guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else { return }
             if data.count < limit { data.append(chunk.prefix(limit - data.count)) }
         }
+    }
+}
+
+/// Collects a tool's whole standard output. Appended to by the runner's reading thread
+/// only, and read after `run` has returned.
+final class ShellOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        storage.append(chunk)
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
     }
 }

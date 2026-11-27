@@ -55,45 +55,10 @@ enum ApplicationsMac {
     /// No shell is involved, so arguments cannot inject commands.
     static func run(_ executable: String, _ arguments: [String], environment: [String: String] = [:],
                     timeout: TimeInterval = 120) async -> Shell.Result {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-                var env = ProcessInfo.processInfo.environment
-                env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-                for (key, value) in environment { env[key] = value }
-                process.environment = env
-                let out = Pipe()
-                let err = Pipe()
-                process.standardOutput = out
-                process.standardError = err
-                process.standardInput = FileHandle.nullDevice
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(returning: Shell.Result(status: -1, stdout: "", stderr: error.localizedDescription))
-                    return
-                }
-                let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-                var errData = Data()
-                let group = DispatchGroup()
-                group.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    errData = err.fileHandleForReading.readDataToEndOfFile()
-                    group.leave()
-                }
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                group.wait()
-                process.waitUntilExit()
-                timer.cancel()
-                continuation.resume(returning: Shell.Result(
-                    status: process.terminationStatus,
-                    stdout: String(decoding: outData, as: UTF8.self),
-                    stderr: String(decoding: errData, as: UTF8.self)))
-            }
-        }
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        for (key, value) in environment { env[key] = value }
+        return await Shell.run(executable, arguments, environment: env, timeout: timeout)
     }
 
     /// Environment for non-interactive Homebrew runs.
