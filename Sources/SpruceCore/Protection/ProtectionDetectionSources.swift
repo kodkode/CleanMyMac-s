@@ -157,7 +157,7 @@ public final class ProtectionAppleRulesLoader: @unchecked Sendable {
     /// (…/XProtect.bundle/Contents/Resources/XProtect.yara → …/Contents/Info.plist).
     static func bundleVersion(forRuleFile path: String) -> String? {
         let contents = ((path as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
-        guard let data = FileManager.default.contents(atPath: (contents as NSString).appendingPathComponent("Info.plist")) else {
+        guard let data = ProtectionFileSniffer.readRegular((contents as NSString).appendingPathComponent("Info.plist")) else {
             return nil
         }
         return ProtectionAppleSecurityParser.bundleVersion(plistData: data)

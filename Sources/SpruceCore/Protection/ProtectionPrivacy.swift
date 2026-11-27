@@ -319,7 +319,7 @@ public enum ProtectionPrivacyCatalog {
 
     /// Display names from Chromium's "Local State" (profile.info_cache).
     public static func chromiumProfileNames(root: String) -> [String: String] {
-        guard let data = FileManager.default.contents(atPath: root + "/Local State"),
+        guard let data = ProtectionFileSniffer.readRegular(root + "/Local State"),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let profile = json["profile"] as? [String: Any],
               let cache = profile["info_cache"] as? [String: Any] else { return [:] }
