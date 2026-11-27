@@ -293,7 +293,9 @@ final class CloudStorageScreenModel {
                     module: .cloudStorage, kind: .scan, bytes: overview.freeableBytes, count: overview.stats.localFileCount,
                     summary: "\(ByteFormat.string(overview.stats.localBytes)) of cloud files on this Mac"))
             } catch {
-                guard let self else { return }
+                // A stopped scan already had its phase set by `cancelScan`; by the time its
+                // error arrives a new scan may be running, and must not be knocked back.
+                guard let self, !Task.isCancelled else { return }
                 if (error as? SpruceError) == .cancelled {
                     self.phase = self.reports.isEmpty ? .providers : .results
                 } else {

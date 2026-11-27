@@ -98,7 +98,38 @@ final class ClutterImageHashTests: XCTestCase {
         XCTAssertTrue(clusters[0].id.hasPrefix("sim:"))
     }
 
-    func testCompleteLinkageGuardPreventsChains() {
+/// Thousands of pictures that all look alike must not cost memory or time for every pair.
+    func testClusteringStaysBoundedForManyAlikeImages() {
+        func print(_ index: Int, _ dHash: UInt64, _ aHash: UInt64 = 0) -> ClutterImageFingerprint {
+            ClutterImageFingerprint(path: "/p/\(index).jpg", dHash: dHash, aHash: aHash, pixelWidth: 10, pixelHeight: 10)
+        }
+        let clusterer = ClutterSimilarClusterer(maximumClusterSize: 60)
+
+        // 5,000 identical fingerprints (blank scans): full clusters of 60, in order.
+        let blank = (0..<5_000).map { print($0, 0) }
+        let chunks = clusterer.cluster(blank)
+        XCTAssertEqual(chunks.count, 84)
+        XCTAssertEqual(chunks.first, Array(0..<60))
+        XCTAssertEqual(chunks.map(\.count).reduce(0, +), 5_000)
+        XCTAssertEqual(chunks.last?.count, 20)
+
+        // 600 distinct fingerprints all within the radius of each other (a time-lapse).
+        var alike: [UInt64] = [0]
+        for a in 0..<64 { alike.append(1 << UInt64(a)) }
+        for a in 0..<64 { for b in (a + 1)..<64 { alike.append(1 << UInt64(a) | 1 << UInt64(b)) } }
+        let lapse = alike.prefix(600).enumerated().map { print($0.offset, $0.element) }
+        let groups = clusterer.cluster(lapse)
+        XCTAssertFalse(groups.isEmpty)
+        XCTAssertTrue(groups.allSatisfy { $0.count >= 2 && $0.count <= 60 })
+        XCTAssertEqual(Set(groups.flatMap { $0 }).count, groups.map(\.count).reduce(0, +), "no image is in two clusters")
+        XCTAssertGreaterThan(groups.map(\.count).reduce(0, +), lapse.count / 2)
+
+        // Stop is noticed during the pairing, not only before it.
+        var calls = 0
+        XCTAssertEqual(clusterer.cluster(lapse, shouldContinue: { calls += 1; return calls < 3 }), [])
+    }
+
+        func testCompleteLinkageGuardPreventsChains() {
         // a–b and b–c are close, a–c is far: with a tight linkage radius they must not
         // end up in one cluster.
         let a = ClutterImageFingerprint(path: "/a", dHash: 0, aHash: 0, pixelWidth: 1, pixelHeight: 1)
