@@ -255,11 +255,19 @@ public struct ScanGroup: Identifiable, Hashable, Sendable, Codable {
     /// Every item in this group and all sub-groups.
     public var allItems: [ScanItem] { items + children.flatMap(\.allItems) }
 
-    public var totalSize: Int64 { allItems.reduce(0) { $0 + $1.size } }
-    public var selectedSize: Int64 { allItems.filter(\.isSelected).reduce(0) { $0 + $1.size } }
-    public var totalCount: Int { allItems.count }
-    public var selectedCount: Int { allItems.filter(\.isSelected).count }
-    public var isEmpty: Bool { allItems.isEmpty }
+    // Totals walk the tree in place: views read them on every redraw, and building the
+    // flat `allItems` array each time copies every item of a large result.
+    public var totalSize: Int64 {
+        children.reduce(items.reduce(0) { $0 + $1.size }) { $0 + $1.totalSize }
+    }
+    public var selectedSize: Int64 {
+        children.reduce(items.reduce(0) { $1.isSelected ? $0 + $1.size : $0 }) { $0 + $1.selectedSize }
+    }
+    public var totalCount: Int { children.reduce(items.count) { $0 + $1.totalCount } }
+    public var selectedCount: Int {
+        children.reduce(items.reduce(0) { $1.isSelected ? $0 + 1 : $0 }) { $0 + $1.selectedCount }
+    }
+    public var isEmpty: Bool { items.isEmpty && children.allSatisfy(\.isEmpty) }
 
     /// Selection state for a tri-state group checkbox.
     public var selectionState: SelectionState {

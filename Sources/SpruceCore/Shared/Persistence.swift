@@ -354,6 +354,8 @@ public struct SpruceSettings: Codable, Equatable, Sendable {
 
     /// True if `path` (or one of its ancestors) is on the ignore list.
     public func isIgnored(path: String) -> Bool {
+        // Scans ask this for every file they walk; with nothing ignored there is nothing to compute.
+        guard !ignoredPaths.isEmpty else { return false }
         let key = PathGuard.key((path as NSString).standardizingPath)
         return ignoredPaths.contains { ignored in
             let ik = PathGuard.key((ignored.expandingTilde as NSString).standardizingPath)
@@ -365,6 +367,7 @@ public struct SpruceSettings: Codable, Equatable, Sendable {
     /// would take it along, so `FileRemover` refuses such a folder.
     public func ignoredPath(inside path: String,
                             exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> String? {
+        guard !ignoredPaths.isEmpty else { return nil }
         let key = PathGuard.key((path as NSString).standardizingPath)
         return ignoredPaths.first { ignored in
             let expanded = (ignored.expandingTilde as NSString).standardizingPath

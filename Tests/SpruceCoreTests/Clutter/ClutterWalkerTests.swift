@@ -58,7 +58,7 @@ final class ClutterWalkerTests: XCTestCase {
         // A sparse file with a length but no allocated blocks looks like a dataless placeholder.
         let path = fixture.home + "/Documents/cloud.bin"
         try? FileManager.default.createDirectory(atPath: fixture.home + "/Documents", withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: path, contents: nil)
+        _ = FileManager.default.createFile(atPath: path, contents: nil)
         let fd = open(path, O_WRONLY)
         XCTAssertGreaterThanOrEqual(fd, 0)
         XCTAssertEqual(ftruncate(fd, 5_000_000), 0)

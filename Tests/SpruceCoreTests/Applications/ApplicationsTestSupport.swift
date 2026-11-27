@@ -30,7 +30,7 @@ final class ApplicationsTempTree {
     func file(_ relative: String, bytes: Int = 16, modified: Date? = nil) -> String {
         let p = path(relative)
         try? FileManager.default.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: p, contents: Data(repeating: 0x41, count: bytes))
+        _ = FileManager.default.createFile(atPath: p, contents: Data(repeating: 0x41, count: bytes))
         if let modified { setModified(p, modified) }
         return p
     }
@@ -40,7 +40,7 @@ final class ApplicationsTempTree {
         let p = path(relative)
         try? FileManager.default.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let data = try! PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0)
-        FileManager.default.createFile(atPath: p, contents: data)
+        _ = FileManager.default.createFile(atPath: p, contents: data)
         return p
     }
 
@@ -89,7 +89,7 @@ final class ApplicationsTempTree {
         put16(&data, 0)
         let p = path(relative)
         try? FileManager.default.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: p, contents: data)
+        _ = FileManager.default.createFile(atPath: p, contents: data)
         return p
     }
 }

@@ -23,8 +23,8 @@
 //
 // Keep rules specific: a rule that matches one of Spruce's harmless sample files (an empty
 // file, a bare program header, a tiny script…) is switched off automatically. Rules that
-// use something the engine doesn't support (regular expressions, base64 strings, the pe,
-// macho or math modules) are skipped on their own without affecting the rest of the file.
+// use something the engine doesn't support (base64 strings, the pe, macho or math
+// modules) are skipped on their own without affecting the rest of the file.
 // See README.md for details.
 //
 // There are no extra rules yet.

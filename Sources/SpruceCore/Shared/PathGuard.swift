@@ -406,8 +406,12 @@ public struct PathGuard: Sendable {
         if applicationFolders.contains(parent) { return true }
         // Check the real file system using the original (case-preserving) path.
         let originalComps = originalPath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard index < originalComps.count else { return false }
-        let bundlePath = "/" + originalComps[...index].joined(separator: "/")
+        // `comps` comes from `key`, which spells /var, /tmp and /etc as /private/…; the
+        // original path may not, so the same component sits one place earlier there.
+        let originalIndex = index - (comps.count - originalComps.count)
+        guard originalIndex >= 0, originalIndex < originalComps.count,
+              originalComps[originalIndex].lowercased() == comps[index] else { return false }
+        let bundlePath = "/" + originalComps[...originalIndex].joined(separator: "/")
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: bundlePath + "/Contents", isDirectory: &isDir) && isDir.boolValue
     }

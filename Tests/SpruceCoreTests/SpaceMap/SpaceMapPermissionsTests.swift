@@ -67,7 +67,7 @@ final class SpaceMapPermissionsTests: XCTestCase {
         let base = NSTemporaryDirectory() + "spacemap-perm-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: base + "/folder", withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: base) }
-        FileManager.default.createFile(atPath: base + "/file.bin", contents: Data(count: 16))
+        _ = FileManager.default.createFile(atPath: base + "/file.bin", contents: Data(count: 16))
 
         let file = try XCTUnwrap(SpaceMapPermissions.facts(ofPath: base + "/file.bin"))
         XCTAssertFalse(file.itemIsDirectory)

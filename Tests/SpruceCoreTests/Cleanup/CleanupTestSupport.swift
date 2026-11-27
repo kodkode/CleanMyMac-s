@@ -36,7 +36,7 @@ final class CleanupFixture {
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)
         let data = contents ?? Data(repeating: 0x41, count: bytes)
-        FileManager.default.createFile(atPath: path, contents: data)
+        _ = FileManager.default.createFile(atPath: path, contents: data)
         setAge(path, age)
         return path
     }
