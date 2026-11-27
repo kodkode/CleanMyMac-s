@@ -152,7 +152,9 @@ struct ApplicationsCatalogReader {
         let script = (contents as NSString).appendingPathComponent("MacOS/run.sh")
         guard let handle = FileHandle(forReadingAtPath: script) else { return false }
         defer { try? handle.close() }
-        let head = String(decoding: handle.readData(ofLength: 4096), as: UTF8.self)
+        // The throwing read: `readData(ofLength:)` raises an uncatchable exception on a read error.
+        guard let data = try? handle.read(upToCount: 4096) else { return false }
+        let head = String(decoding: data, as: UTF8.self)
         return head.contains("steam://run/")
     }
 

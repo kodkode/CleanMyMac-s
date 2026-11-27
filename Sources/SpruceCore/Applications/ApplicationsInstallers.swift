@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 /// The kinds of installer files Spruce looks for.
 public enum ApplicationsInstallerKind: String, Codable, Sendable, CaseIterable {
@@ -302,13 +305,33 @@ public enum ApplicationsDiskImage {
     /// True for encrypted disk images: the `encrcdsa` header (current format) or the
     /// `cdsaencr` trailer (the original format).
     public static func isEncrypted(atPath path: String) -> Bool {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        guard let handle = ApplicationsLocalFile.handle(forReading: path) else { return false }
         defer { try? handle.close() }
         guard let head = try? handle.read(upToCount: 8) else { return false }
         if head == Data("encrcdsa".utf8) { return true }
         guard let size = try? handle.seekToEnd(), size >= 16 else { return false }
         guard (try? handle.seek(toOffset: size - 8)) != nil, let tail = try? handle.read(upToCount: 8) else { return false }
         return tail == Data("cdsaencr".utf8)
+    }
+}
+
+/// Opens installer candidates for a quick look inside (zip index, disk image header).
+enum ApplicationsLocalFile {
+    /// `SF_DATALESS` (`<sys/stat.h>`): the file's contents live only in the cloud.
+    private static let datalessFlag: UInt32 = 0x4000_0000
+
+    /// A handle for a regular file whose contents are on this Mac; nil otherwise.
+    ///
+    /// Online-only files (iCloud Drive with Optimise Mac Storage, File Provider apps) are
+    /// refused: reading one makes macOS download it, so a scan of a Desktop kept in iCloud
+    /// would pull every archive back, and fail on each of them when offline.
+    static func handle(forReading path: String) -> FileHandle? {
+        var info = stat()
+        guard lstat(path, &info) == 0, UInt32(info.st_mode) & UInt32(S_IFMT) == UInt32(S_IFREG) else { return nil }
+        #if canImport(Darwin)
+        if UInt32(info.st_flags) & datalessFlag != 0 { return nil }
+        #endif
+        return FileHandle(forReadingAtPath: path)
     }
 }
 
@@ -319,23 +342,32 @@ public enum ApplicationsZipIndex {
 
     /// Distinct first path components of the archive's entries ("Foo.app", "README.txt"),
     /// ignoring `__MACOSX`. nil when the file is not a readable zip (or is a ZIP64 archive).
+    ///
+    /// Reads with `FileHandle`'s throwing calls only: the older `seekToEndOfFile()` /
+    /// `readData(ofLength:)` raise an Objective-C exception on a read error (a disk I/O
+    /// error, a volume that went away), which Swift can't catch and which would take the
+    /// whole app down in the middle of a scan of Downloads or the Desktop.
     public static func topLevelEntries(atPath path: String) -> [String]? {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        guard let handle = ApplicationsLocalFile.handle(forReading: path) else { return nil }
         defer { try? handle.close() }
-        let fileSize = handle.seekToEndOfFile()
-        guard fileSize >= 22 else { return nil }
+        guard let fileSize = try? handle.seekToEnd(), fileSize >= 22 else { return nil }
         let tailLength = min(fileSize, 65_557)
-        handle.seek(toFileOffset: fileSize - tailLength)
-        let tail = [UInt8](handle.readData(ofLength: Int(tailLength)))
-        guard let eocd = findEndOfCentralDirectory(tail) else { return nil }
+        guard let tail = read(handle, at: fileSize - tailLength, count: Int(tailLength)),
+              let eocd = findEndOfCentralDirectory(tail) else { return nil }
         let entryCount = Int(le16(tail, eocd + 10))
         let directorySize = Int(le32(tail, eocd + 12))
         let directoryOffset = UInt64(le32(tail, eocd + 16))
         guard directoryOffset != 0xFFFF_FFFF, directorySize > 0, directorySize <= maxCentralDirectory,
-              directoryOffset + UInt64(directorySize) <= fileSize else { return nil }
-        handle.seek(toFileOffset: directoryOffset)
-        let directory = [UInt8](handle.readData(ofLength: directorySize))
+              directoryOffset + UInt64(directorySize) <= fileSize,
+              let directory = read(handle, at: directoryOffset, count: directorySize) else { return nil }
         return entryNames(centralDirectory: directory, expected: entryCount)
+    }
+
+    /// Exactly `count` bytes at `offset`; nil on any error or a short read.
+    private static func read(_ handle: FileHandle, at offset: UInt64, count: Int) -> [UInt8]? {
+        guard (try? handle.seek(toOffset: offset)) != nil,
+              let data = try? handle.read(upToCount: count), data.count == count else { return nil }
+        return [UInt8](data)
     }
 
     /// Parses central-directory file headers and returns distinct top-level names.
