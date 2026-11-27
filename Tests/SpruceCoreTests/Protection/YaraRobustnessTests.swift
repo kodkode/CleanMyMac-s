@@ -484,4 +484,17 @@ final class YaraRobustnessTests: XCTestCase {
             XCTAssertNil(set.scanFileDetailed(atPath: fifo, maxBytes: 100), "special files are skipped without blocking")
         }
     }
+
+    /// A long xor string over a run of one byte compares nearly all of itself at every
+    /// position. That work counts against the string's budget like any other.
+    func testLongXorStringOverPaddingRunsOutOfBudget() {
+        let pattern = String(repeating: "A", count: 4_000) + "B"
+        let set = YaraRuleSet(source: "rule padded { strings: $a = \"\(pattern)\" xor condition: $a }", origin: "test")
+        XCTAssertEqual(set.skipped, [])
+        let start = Date()
+        let result = set.scanDetailed(Data(count: 2 << 20), limits: YaraScanLimits(maxStepsPerString: 300_000))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 10)
+        XCTAssertTrue(result.matches.isEmpty)
+        XCTAssertTrue(result.notes.contains { $0.contains("too much work") }, "\(result.notes)")
+    }
 }

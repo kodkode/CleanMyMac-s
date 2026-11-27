@@ -34,7 +34,7 @@ final class ClutterFixture {
         let path = (home as NSString).appendingPathComponent(relative)
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
                                                  withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: path, contents: contents ?? Data(repeating: fill, count: bytes))
+        _ = FileManager.default.createFile(atPath: path, contents: contents ?? Data(repeating: fill, count: bytes))
         if age > 0 { setAge(path, age) }
         return path
     }

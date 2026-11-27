@@ -22,6 +22,36 @@ final class PathGuardTests: XCTestCase {
         }
     }
 
+    /// An app bundle in a temporary folder is still an app bundle: /tmp and /var are spelled
+    /// /private/… inside the guard, which must not shift which folder it looks at on disk.
+    func testAppBundleInATemporaryFolderIsRecognised() throws {
+        let base = NSTemporaryDirectory() + "spruce-guard-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        try FileManager.default.createDirectory(atPath: base + "/Foo.app/Contents", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: base + "/Foo.cache", withIntermediateDirectories: true)
+        let guardian = PathGuard()
+        XCTAssertTrue(guardian.check(base + "/Foo.cache", method: .remove).isAllowed)
+        XCTAssertFalse(guardian.check(base + "/Foo.app", method: .remove).isAllowed)
+        XCTAssertTrue(guardian.check(base + "/Foo.app", method: .remove, options: .allowAppBundles).isAllowed)
+    }
+
+    func testGroupTotalsCountNestedItems() {
+        var a = ScanItem.file(URL(fileURLWithPath: "/x/a"), size: 10, safety: .safe, deletion: .remove, title: "a")
+        var b = ScanItem.file(URL(fileURLWithPath: "/x/b"), size: 20, safety: .safe, deletion: .remove, title: "b")
+        var c = ScanItem.file(URL(fileURLWithPath: "/x/c"), size: 40, safety: .safe, deletion: .remove, title: "c")
+        a.isSelected = true; b.isSelected = false; c.isSelected = true
+        let inner = ScanGroup(id: "inner", title: "inner", items: [b, c])
+        let empty = ScanGroup(id: "empty", title: "empty", children: [ScanGroup(id: "e2", title: "e2")])
+        let outer = ScanGroup(id: "outer", title: "outer", items: [a], children: [inner, empty])
+        XCTAssertEqual(outer.totalSize, 70)
+        XCTAssertEqual(outer.selectedSize, 50)
+        XCTAssertEqual(outer.totalCount, 3)
+        XCTAssertEqual(outer.selectedCount, 2)
+        XCTAssertEqual(outer.totalCount, outer.allItems.count)
+        XCTAssertFalse(outer.isEmpty)
+        XCTAssertTrue(empty.isEmpty)
+    }
+
     func testAllowsJunkInsideZones() {
         XCTAssertTrue(guardian.check("/Users/test/Library/Caches/com.example.app", method: .remove).isAllowed)
         XCTAssertTrue(guardian.check("/Users/test/Library/Logs/Example/log.txt", method: .remove).isAllowed)

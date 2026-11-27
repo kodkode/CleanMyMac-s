@@ -473,6 +473,10 @@ final class YaraSearch {
         let limit = min(data.count - bytes.count + 1, linearLimit)
         let count = bytes.count
         let head = bytes[0]
+        // Bytes compared past the first one count against the budget as well: a long pattern
+        // over a run of one repeated byte (zero padding) compares almost all of itself at
+        // every position, which the per-position charge alone would never notice.
+        var compared = 0
         bytes.withUnsafeBufferPointer { pattern in
             for position in 0..<limit {
                 if full[segment] || stepsLeft <= 0 { break }
@@ -481,9 +485,14 @@ final class YaraSearch {
                 var k = 1
                 while k < count, data[position + k] ^ key == pattern[k] { k += 1 }
                 if k == count { record(segment, YaraSpan(start: position, end: position + count)) }
+                compared += k - 1
+                if compared >= 1 << 16 {
+                    charge(segment, compared >> 4)
+                    compared = 0
+                }
             }
         }
-        charge(segment, limit >> 4)
+        charge(segment, (limit + compared) >> 4)
     }
 
     // MARK: Strings
