@@ -28,11 +28,48 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         self.prettyPrinted = prettyPrinted
     }
 
+    /// The stored value; nil when there is no file or it can't be read as `Value`.
+    ///
+    /// A file that exists but can't be read (damaged, hand-edited, or written by a newer
+    /// version) is moved to `unreadableURL` first, so the caller's next `save` — usually of
+    /// defaults — doesn't destroy it. When only some list elements were unreadable (see
+    /// `LossyArray`) the rest is returned and a copy of the whole file is kept there.
     public func load() -> Value? {
+        decode(Value.self)
+    }
+
+    /// Where `load` keeps a file it couldn't read in full: `settings.json` → `settings.unreadable.json`.
+    /// Only the latest one is kept.
+    public var unreadableURL: URL {
+        let ext = url.pathExtension
+        let base = url.deletingPathExtension().lastPathComponent
+        return url.deletingLastPathComponent()
+            .appendingPathComponent(ext.isEmpty ? base + ".unreadable" : base + ".unreadable." + ext)
+    }
+
+    fileprivate func decode<T: Decodable>(_ type: T.Type) -> T? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(Value.self, from: data)
+        let dropped = LossyDecodeCounter()
+        decoder.userInfo[LossyDecodeCounter.key] = dropped
+        guard let value = try? decoder.decode(type, from: data) else {
+            if !data.isEmpty { keepUnreadable(move: true) }
+            return nil
+        }
+        if dropped.count > 0 { keepUnreadable(move: false) }
+        return value
+    }
+
+    private func keepUnreadable(move: Bool) {
+        let fm = FileManager.default
+        let target = unreadableURL
+        try? fm.removeItem(at: target)
+        if move {
+            try? fm.moveItem(at: url, to: target)
+        } else {
+            try? fm.copyItem(at: url, to: target)
+        }
     }
 
     public func save(_ value: Value) throws {
@@ -42,6 +79,47 @@ public struct JSONFileStore<Value: Codable>: Sendable {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(value)
         try data.write(to: url, options: .atomic)
+    }
+}
+
+extension JSONFileStore {
+    /// Like `load` for a stored list, but an element that can't be read (for example a
+    /// record of a kind only a newer version knows) is skipped instead of losing the list.
+    public func loadElements<Element>() -> [Element]? where Value == [Element] {
+        decode(LossyArray<Element>.self)?.elements
+    }
+}
+
+/// Counts the list elements a `LossyArray` skipped during one decode (see `JSONFileStore.load`).
+final class LossyDecodeCounter: @unchecked Sendable {
+    static let key = CodingUserInfoKey(rawValue: "spruce.lossyDecodeCounter")!
+    var count = 0
+}
+
+/// A list that decodes element by element: one unreadable element is skipped rather than
+/// failing the whole list.
+public struct LossyArray<Element: Decodable>: Decodable {
+    public let elements: [Element]
+
+    /// Decoding this never throws, so the list's container always moves on to the next element.
+    private struct Attempt: Decodable {
+        let value: Element?
+        init(from decoder: Decoder) throws { value = try? Element(from: decoder) }
+    }
+
+    public init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+        var dropped = 0
+        while !container.isAtEnd {
+            if let value = try container.decode(Attempt.self).value {
+                elements.append(value)
+            } else {
+                dropped += 1
+            }
+        }
+        self.elements = elements
+        if dropped > 0 { (decoder.userInfo[LossyDecodeCounter.key] as? LossyDecodeCounter)?.count += dropped }
     }
 }
 
@@ -240,20 +318,24 @@ public struct SpruceSettings: Codable, Equatable, Sendable {
         self.init()
         let c = try decoder.container(keyedBy: CodingKeys.self)
         func v<T: Decodable>(_ key: CodingKeys, _ current: T) -> T { (try? c.decodeIfPresent(T.self, forKey: key)) ?? nil ?? current }
+        // Lists keep their readable elements: one bad entry must not empty the ignore list.
+        func list<T: Decodable>(_ key: CodingKeys, _ current: [T]) -> [T] {
+            ((try? c.decodeIfPresent(LossyArray<T>.self, forKey: key)) ?? nil)?.elements ?? current
+        }
         playSounds = v(.playSounds, playSounds)
         launchAtLogin = v(.launchAtLogin, launchAtLogin)
         showMenuBarMonitor = v(.showMenuBarMonitor, showMenuBarMonitor)
         hasCompletedOnboarding = v(.hasCompletedOnboarding, hasCompletedOnboarding)
         reduceAmbientMotion = v(.reduceAmbientMotion, reduceAmbientMotion)
-        checkupModules = v(.checkupModules, checkupModules)
-        excludedCleanupCategories = v(.excludedCleanupCategories, excludedCleanupCategories)
+        checkupModules = list(.checkupModules, checkupModules)
+        excludedCleanupCategories = list(.excludedCleanupCategories, excludedCleanupCategories)
         largeFileThreshold = v(.largeFileThreshold, largeFileThreshold)
         oldFileDays = v(.oldFileDays, oldFileDays)
         unusedAppDays = v(.unusedAppDays, unusedAppDays)
-        clutterLocations = v(.clutterLocations, clutterLocations)
-        ignoredPaths = v(.ignoredPaths, ignoredPaths)
-        ignoredBundleIDs = v(.ignoredBundleIDs, ignoredBundleIDs)
-        ignoredItemIDs = v(.ignoredItemIDs, ignoredItemIDs)
+        clutterLocations = list(.clutterLocations, clutterLocations)
+        ignoredPaths = list(.ignoredPaths, ignoredPaths)
+        ignoredBundleIDs = list(.ignoredBundleIDs, ignoredBundleIDs)
+        ignoredItemIDs = list(.ignoredItemIDs, ignoredItemIDs)
         realtimeProtection = v(.realtimeProtection, realtimeProtection)
         scanDepth = v(.scanDepth, scanDepth)
         threatFeedEnabled = v(.threatFeedEnabled, threatFeedEnabled)
@@ -331,6 +413,15 @@ public struct ActivityHistory: Codable, Sendable, Equatable {
     public var entries: [ActivityEntry] = []
 
     public init(entries: [ActivityEntry] = []) { self.entries = entries }
+
+    private enum CodingKeys: String, CodingKey { case entries }
+
+    /// An entry that can't be read (a kind or module only a newer version knows) is
+    /// skipped; it must not cost the rest of the history.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        entries = try container.decodeIfPresent(LossyArray<ActivityEntry>.self, forKey: .entries)?.elements ?? []
+    }
 
     public mutating func append(_ entry: ActivityEntry, limit: Int = 5000) {
         entries.append(entry)

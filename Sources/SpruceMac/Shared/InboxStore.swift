@@ -65,7 +65,7 @@ public final class InboxStore {
 
     public init(url: URL = SprucePaths.applicationSupport.appendingPathComponent("inbox.json")) {
         store = JSONFileStore(url: url, prettyPrinted: false)
-        items = Self.pruned(store.load() ?? [])
+        items = Self.pruned(store.loadElements() ?? [])
     }
 
     public var unreadCount: Int { items.filter { !$0.isRead }.count }

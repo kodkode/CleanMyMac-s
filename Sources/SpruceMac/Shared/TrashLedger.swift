@@ -150,7 +150,7 @@ public final class TrashLedger: @unchecked Sendable {
 
     private func loaded() -> [TrashLedgerEntry] {
         if let cache { return cache }
-        let value = store.load() ?? []
+        let value = store.loadElements() ?? []
         cache = value
         return value
     }
