@@ -5,8 +5,8 @@ This folder is Spruce's downloadable threat list. The app fetches two files from
 
 | File | Address |
 |---|---|
-| `feed.json` | `https://raw.githubusercontent.com/MiTMi/CleanMyMac-s/main/ThreatFeed/feed.json` |
-| `rules.yara` | `https://raw.githubusercontent.com/MiTMi/CleanMyMac-s/main/ThreatFeed/rules.yara` |
+| `feed.json` | `https://raw.githubusercontent.com/kodkode/CleanMyMac-s/main/ThreatFeed/feed.json` |
+| `rules.yara` | `https://raw.githubusercontent.com/kodkode/CleanMyMac-s/main/ThreatFeed/rules.yara` |
 
 How the app uses them:
 

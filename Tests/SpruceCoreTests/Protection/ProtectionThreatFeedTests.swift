@@ -340,6 +340,14 @@ final class ProtectionThreatFeedTests: XCTestCase {
         XCTAssertFalse(ProtectionThreatFeed.isAllowedDownloadURL(URL(fileURLWithPath: "/tmp/feed.json")))
     }
 
+    /// The list must come from this repository under its current name: an old name only
+    /// works through GitHub's rename redirect, which whoever registers that name takes over.
+    func testDownloadAddressesNameThisRepository() {
+        let base = "https://raw.githubusercontent.com/kodkode/CleanMyMac-s/main/ThreatFeed/"
+        XCTAssertEqual(ProtectionThreatFeed.feedURL.absoluteString, base + "feed.json")
+        XCTAssertEqual(ProtectionThreatFeed.rulesURL.absoluteString, base + "rules.yara")
+    }
+
     func testStatusSchedulingAndDecoding() throws {
         var status = ProtectionThreatFeedStatus()
         let now = Date(timeIntervalSince1970: 2_000_000_000)
