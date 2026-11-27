@@ -12,8 +12,8 @@ import Foundation
 public struct ProtectionThreatFeed: Sendable, Equatable {
     /// The feed format this version of Spruce reads.
     public static let supportedFormat = 1
-    public static let feedURL = URL(string: "https://raw.githubusercontent.com/MiTMi/CleanMyMac-s/main/ThreatFeed/feed.json")!
-    public static let rulesURL = URL(string: "https://raw.githubusercontent.com/MiTMi/CleanMyMac-s/main/ThreatFeed/rules.yara")!
+    public static let feedURL = URL(string: "https://raw.githubusercontent.com/kodkode/CleanMyMac-s/main/ThreatFeed/feed.json")!
+    public static let rulesURL = URL(string: "https://raw.githubusercontent.com/kodkode/CleanMyMac-s/main/ThreatFeed/rules.yara")!
     /// Bigger downloads are refused.
     public static let maxFeedBytes = 5 << 20
     public static let maxRulesBytes = 2 << 20
