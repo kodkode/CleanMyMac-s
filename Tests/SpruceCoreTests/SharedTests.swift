@@ -404,4 +404,41 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(clean.loadElements(), [.cleanup])
         XCTAssertFalse(FileManager.default.fileExists(atPath: clean.unreadableURL.path))
     }
+
+    // MARK: Ignore list and what a folder contains
+
+    func testIgnoredPathInsideAFolderIsFound() {
+        var settings = SpruceSettings()
+        settings.ignoredPaths = ["~/Library/Caches/com.foo/offline-data", "/opt/keep"]
+        let home = NSHomeDirectory()
+        let all: (String) -> Bool = { _ in true }
+        XCTAssertEqual(settings.ignoredPath(inside: home + "/Library/Caches/com.foo", exists: all),
+                       "~/Library/Caches/com.foo/offline-data")
+        XCTAssertEqual(settings.ignoredPath(inside: home + "/Library/CACHES/com.foo/", exists: all),
+                       "~/Library/Caches/com.foo/offline-data", "compared the way PathGuard compares paths")
+        XCTAssertEqual(settings.ignoredPath(inside: "/opt", exists: all), "/opt/keep")
+        // The ignored item itself is `isIgnored`'s business, and siblings don't count.
+        XCTAssertNil(settings.ignoredPath(inside: home + "/Library/Caches/com.foo/offline-data", exists: all))
+        XCTAssertNil(settings.ignoredPath(inside: home + "/Library/Caches/com.foobar", exists: all))
+        // An ignored path that is no longer there protects nothing.
+        XCTAssertNil(settings.ignoredPath(inside: "/opt", exists: { _ in false }))
+    }
+
+    #if os(macOS)
+    /// The administrator removal script runs `/bin/rm -rf -x` so root never crosses into a
+    /// disk mounted inside a folder. If this macOS's rm didn't know `-x`, every such
+    /// removal would fail; this keeps that assumption checked.
+    func testSystemRmAcceptsTheStayOnOneDiskFlag() throws {
+        let folder = dir.appendingPathComponent("rm-x/inner")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: folder.appendingPathComponent("file"))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/rm")
+        process.arguments = ["-rf", "-x", "--", dir.appendingPathComponent("rm-x").path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("rm-x").path))
+    }
+    #endif
 }

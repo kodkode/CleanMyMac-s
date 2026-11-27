@@ -91,6 +91,18 @@ final class ProtectionReviewFixTests: XCTestCase {
         XCTAssertEqual(finding.relatedPaths, [bundle])
     }
 
+    /// Scripts can't be signed, so "unsigned" says nothing about them: a job flagged for its
+    /// plist alone must not take the user's own script to the Trash with it.
+    func testFlaggedAgentKeepsAScriptThatIsNotItselfImplicated() throws {
+        let script = fx.text("~/bin/backup.sh", "#!/bin/sh\nrsync -a ~/Documents /Volumes/Backup\n", executable: true)
+        let plist = fx.launchPlist("~/Library/LaunchAgents/com.chrome.extension.plist", label: "com.chrome.extension",
+                                   arguments: [script])
+        let report = try fx.scanner().scan(depth: .quick)
+        let finding = try XCTUnwrap(report.findings.first { $0.path == plist })
+        XCTAssertTrue(finding.relatedPaths.isEmpty)
+        XCTAssertTrue(finding.reasons.contains { $0.contains("backup.sh") && $0.contains("stays where it is") })
+    }
+
     func testFlaggedAgentKeepsASignedStandaloneProgram() throws {
         let tool = fx.machO("/Users/Shared/VendorTool/vendortool")
         let plist = fx.launchPlist("~/Library/LaunchAgents/com.chrome.extension.plist", label: "com.chrome.extension",

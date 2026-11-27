@@ -494,9 +494,9 @@ public final class ApplicationsEngine: CheckupContributor, GroupScanner, @unchec
             NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: update.appPath), configuration: configuration,
                                                completionHandler: nil)
         case .download:
-            if let url = update.downloadURL { NSWorkspace.shared.open(url) }
+            if let url = update.downloadURL, ApplicationsUpdate.isWebLink(url) { NSWorkspace.shared.open(url) }
         case .releaseNotes:
-            if let url = update.releaseNotesURL { NSWorkspace.shared.open(url) }
+            if let url = update.releaseNotesURL, ApplicationsUpdate.isWebLink(url) { NSWorkspace.shared.open(url) }
         }
     }
 

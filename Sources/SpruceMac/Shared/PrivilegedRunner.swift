@@ -269,7 +269,7 @@ public final class PrivilegedRunner: @unchecked Sendable {
 
     static func removeScript(_ pinned: [Pinned]) -> String {
         let parts = pinned.map { pin in
-            "( \(enterParent(pin)) && \(sameItem(pin)) && /bin/rm -rf -- \(shellQuote("./" + pin.name)) " +
+            "( \(enterParent(pin)) && \(sameItem(pin)) && /bin/rm -rf -x -- \(shellQuote("./" + pin.name)) " +
             "&& echo 'SPRUCE-OK \(pin.index)' ) 2>/dev/null || echo 'SPRUCE-SKIP \(pin.index)'"
         }
         return parts.joined(separator: "; ") + "; true"

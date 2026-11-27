@@ -171,9 +171,12 @@ public final class ToolboxShredder: @unchecked Sendable {
             return .failed(trashed.failures.first?.reason ?? "It couldn't be moved to the Trash.")
         }
 
-        guard let trashDirectory else { return .inTrash }
-        let inTrash = trashDirectory.appendingPathComponent(scrubbed.lastPathComponent)
-        guard FileWalker.entry(at: inTrash.path) != nil else { return .inTrash }
+        // Where the Trash really put it (it renames on a name clash), never a guess from the
+        // name: a guess could point at an older, unrelated item in the Trash.
+        guard let trashDirectory,
+              let recorded = TrashLedger.shared.entries(runIDs: trashed.trashRunIDs).first else { return .inTrash }
+        let inTrash = URL(fileURLWithPath: recorded.trashedPath)
+        guard recorded.isStillTheTrashedItem(), FileWalker.entry(at: inTrash.path) != nil else { return .inTrash }
 
         // Permanent removal is allowed in the home Trash; other volumes' Trash folders
         // are added as a zone just for this call.
